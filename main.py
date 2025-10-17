@@ -134,31 +134,31 @@ def vlm_inference(text=None, images=None, sys_message=None, processor=None, mode
             outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
             return outputs
                     
-        elif "gpt" in args.model_path:
-            PROMPT_MESSAGES = [
-                {
-                    "role": "user",
-                    "content": [
-                        *map(lambda x: {"image": x, "resize": 768}, images),
-                        text,
-                    ],
-                },
-            ]
-            if sys_message is not None:
-                sys_message_dict = {
-                    "role": "system",
-                    "content": sys_message
-                }
-                PROMPT_MESSAGES.append(sys_message_dict)
-            params = {
-                "model": "gpt-4o-2024-11-20",
-                "messages": PROMPT_MESSAGES,
-                "max_tokens": 400,
-            }
+        # elif "gpt" in args.model_path:
+        #     PROMPT_MESSAGES = [
+        #         {
+        #             "role": "user",
+        #             "content": [
+        #                 *map(lambda x: {"image": x, "resize": 768}, images),
+        #                 text,
+        #             ],
+        #         },
+        #     ]
+        #     if sys_message is not None:
+        #         sys_message_dict = {
+        #             "role": "system",
+        #             "content": sys_message
+        #         }
+        #         PROMPT_MESSAGES.append(sys_message_dict)
+        #     params = {
+        #         "model": "gpt-4o-2024-11-20",
+        #         "messages": PROMPT_MESSAGES,
+        #         "max_tokens": 400,
+        #     }
 
-            result = client.chat.completions.create(**params)
+        #     result = client.chat.completions.create(**params)
 
-            return result.choices[0].message.content
+        #     return result.choices[0].message.content
 
 def SceneDescription(obs_images, processor=None, model=None, tokenizer=None, args=None):
     prompt = f"""You are a autonomous driving labeller. You have access to these front-view camera images of a car taken at a 0.5 second interval over the past 5 seconds. Imagine you are driving the car. Describe the driving scene according to traffic lights, movements of other cars or pedestrians and lane markings."""
@@ -213,7 +213,11 @@ def GenerateMotion(obs_images, obs_waypoints, obs_velocities, obs_curvatures, gi
     obs_waypoints_str = [f"[{x[0]:.2f},{x[1]:.2f}]" for x in obs_waypoints]
     obs_waypoints_str = ", ".join(obs_waypoints_str)
     obs_velocities_norm = np.linalg.norm(obs_velocities, axis=1)
+    
+    # aka how much to turn the steering wheel. In the paper it's
+    # the array K = {k_t}. It's multiplied by 100
     obs_curvatures = obs_curvatures * 100
+    
     obs_speed_curvature_str = [f"[{x[0]:.1f},{x[1]:.1f}]" for x in zip(obs_velocities_norm, obs_curvatures)]
     obs_speed_curvature_str = ", ".join(obs_speed_curvature_str)
 
