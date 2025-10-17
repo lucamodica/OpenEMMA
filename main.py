@@ -17,7 +17,7 @@ from scipy.integrate import cumulative_trapezoid
 import json
 from openemma.YOLO3D.inference import yolo3d_nuScenes
 from utils import EstimateCurvatureFromTrajectory, IntegrateCurvatureForPoints, OverlayTrajectory, WriteImageSequenceToVideo
-from transformers import MllamaForConditionalGeneration, AutoProcessor, Qwen2VLForConditionalGeneration, Qwen2_5_VLForConditionalGeneration, AutoTokenizer
+from transformers import MllamaForConditionalGeneration, AutoProcessor, Qwen2VLForConditionalGeneration, AutoTokenizer
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from llava.model.builder import load_pretrained_model
@@ -26,7 +26,7 @@ from llava.utils import disable_torch_init
 from llava.mm_utils import tokenizer_image_token, process_images, get_model_name_from_path
 from llava.conversation import conv_templates
 
-client = OpenAI(api_key="[your-openai-api-key]")
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 OBS_LEN = 10
 FUT_LEN = 10
@@ -240,9 +240,9 @@ def GenerateMotion(obs_images, obs_waypoints, obs_velocities, obs_curvatures, gi
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="gpt")
+    parser.add_argument("--model-path", type=str, default="qwen")
     parser.add_argument("--plot", type=bool, default=True)
-    parser.add_argument("--dataroot", type=str, default='datasets/NuScenes')
+    parser.add_argument("--dataroot", type=str, default='data/sets/nuscenes')
     parser.add_argument("--version", type=str, default='v1.0-mini')
     parser.add_argument("--method", type=str, default='openemma')
     args = parser.parse_args()
