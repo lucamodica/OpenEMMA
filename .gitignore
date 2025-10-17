@@ -17,6 +17,7 @@ env/
 *.log
 *.pkl
 data/
+*.tgz
 
 # Project specific
 gpt_results/
