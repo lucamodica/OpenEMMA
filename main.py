@@ -17,7 +17,7 @@ from scipy.integrate import cumulative_trapezoid
 import json
 from openemma.YOLO3D.inference import yolo3d_nuScenes
 from utils import EstimateCurvatureFromTrajectory, IntegrateCurvatureForPoints, OverlayTrajectory, WriteImageSequenceToVideo
-from transformers import MllamaForConditionalGeneration, AutoProcessor, Qwen2VLForConditionalGeneration, AutoTokenizer
+from transformers import MllamaForConditionalGeneration, AutoProcessor, Qwen2VLForConditionalGeneration, AutoTokenizer, Qwen2_5_VLForConditionalGeneration
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from llava.model.builder import load_pretrained_model
@@ -26,7 +26,8 @@ from llava.utils import disable_torch_init
 from llava.mm_utils import tokenizer_image_token, process_images, get_model_name_from_path
 from llava.conversation import conv_templates
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# case with gpt4o ignored for now
+# client = OpenAI(api_key="")
 
 OBS_LEN = 10
 FUT_LEN = 10
@@ -327,7 +328,7 @@ if __name__ == '__main__':
 
             # Get the front camera image of the sample.
             cam_front_data = nusc.get('sample_data', sample['data']['CAM_FRONT'])
-            # nusc.render_sample_data(cam_front_data['token'])
+            nusc.render_sample_data(cam_front_data['token'])
 
 
             if "gpt" in args.model_path:
