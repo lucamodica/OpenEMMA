@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from openai import OpenAI
+# from openai import OpenAI
 from nuscenes import NuScenes
 from pyquaternion import Quaternion
 from scipy.integrate import cumulative_trapezoid
@@ -33,6 +33,7 @@ from llava.conversation import conv_templates
 OBS_LEN = 10
 FUT_LEN = 10
 TTL_LEN = OBS_LEN + FUT_LEN
+
 
 def getMessage(prompt, image=None, args=None):
     if "llama" in args.model_path or "Llama" in args.model_path:
@@ -248,7 +249,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="qwen")
     parser.add_argument("--plot", type=bool, default=True)
-    parser.add_argument("--dataroot", type=str, default='data/sets/nuscenes')
+    parser.add_argument("--dataroot", type=str, default='nuscenes//v1.0-mini')
     parser.add_argument("--version", type=str, default='v1.0-mini')
     parser.add_argument("--method", type=str, default='openemma')
     args = parser.parse_args()
@@ -269,7 +270,7 @@ if __name__ == '__main__':
                     attn_implementation="flash_attention_2",
                     device_map="auto"
                 )
-                processor = AutoProcessor.from_pretrained("/root/OpenEMMA/models/Qwen2.5-VL-3B-Instruct")
+                processor = AutoProcessor.from_pretrained("models/Qwen2.5-VL-3B-Instruct")
                 tokenizer = None
                 qwen25_loaded = True
                 print("已本地加载 Qwen2.5-VL-3B-Instruct 并启用 flash attention。")
@@ -306,7 +307,7 @@ if __name__ == '__main__':
     os.makedirs(timestamp, exist_ok=True)
 
     # Load the dataset
-    nusc = NuScenes(version=args.version, dataroot=args.dataroot)
+    nusc = NuScenes(version=args.version, dataroot=f"{os.getcwd()}/{args.dataroot}")
 
     # Iterate the scenes
     scenes = nusc.scene
