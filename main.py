@@ -4,6 +4,7 @@ import re
 import argparse
 from datetime import datetime
 from math import atan2
+import time
 
 import cv2
 import numpy as np
@@ -312,12 +313,14 @@ if __name__ == '__main__':
     
     print(f"Number of scenes: {len(scenes)}")
 
+    start_time = time.time()
     for scene in scenes:
         token = scene['token']
         first_sample_token = scene['first_sample_token']
         last_sample_token = scene['last_sample_token']
         name = scene['name']
         description = scene['description']
+        start_scene_time = time.time()
 
         if not name in ["scene-0103", "scene-1077"]:
             continue
@@ -378,10 +381,12 @@ if __name__ == '__main__':
 
         # Debug
         if args.plot:
+            plt.figure(figsize=(10, 10))
             plt.quiver(ego_poses_world[:, 0], ego_poses_world[:, 1], ego_velocities[:, 0], ego_velocities[:, 1],
                     color='b')
             plt.plot(estimated_points[:, 0], estimated_points[:, 1], 'g-', label='Reconstruction')
             plt.legend()
+            plt.title(f"Ego Vehicle Trajectory Interpolation for Scene {name}")
             plt.savefig(f"{timestamp}/{name}_interpolation.jpg")
             plt.close()
 
@@ -414,10 +419,12 @@ if __name__ == '__main__':
             # Allocate the images.
             if "gpt" in args.model_path:
                 img = cv2.imdecode(np.frombuffer(base64.b64decode(curr_image), dtype=np.uint8), cv2.IMREAD_COLOR)
-                img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
+                # img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
             else:
                 with open(os.path.join(curr_image), "rb") as image_file:
                     img = cv2.imdecode(np.frombuffer(image_file.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
+                    
+            img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
 
             for rho in range(3):
                 # Assemble the prompt.
@@ -442,7 +449,7 @@ if __name__ == '__main__':
             print(f"Got {len(speed_curvature_pred)} future actions: {speed_curvature_pred}")
 
             # GT
-            # OverlayTrajectory(img, fut_ego_traj_world, obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0))
+            OverlayTrajectory(img, fut_ego_traj_world, obs_camera_params[-1], obs_ego_poses[-1], color=(255, 255, 0), args=args)
 
             # Pred
             pred_len = min(FUT_LEN, len(speed_curvature_pred))
@@ -522,8 +529,13 @@ if __name__ == '__main__':
 
         if args.plot:
             WriteImageSequenceToVideo(cam_images_sequence, f"{timestamp}/{name}")
+            
+        print(f"Scene {name} done in {time.time() - start_scene_time} seconds. ADE1s: {mean_ade1s}, ADE2s: {mean_ade2s}, ADE3s: {mean_ade3s}, AvgADE: {aveg_ade}")
 
         # break  # Scenes
+        
+    # print the total inference time
+    print(f"Total inference time: {time.time() - start_time} seconds")
 
 
 def vlm_inference(text=None, images=None, sys_message=None, processor=None, model=None, tokenizer=None, args=None):
