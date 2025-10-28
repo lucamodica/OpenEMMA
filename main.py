@@ -6,6 +6,14 @@ from datetime import datetime
 from math import atan2
 import time
 
+# install external needed packages if needed
+# if os.system("pip show nuscenes-devkit qwen_vl_utils flash-attn") != 0:
+#     os.system("pip install nuscenes-devkit qwen_vl_utils flash-attn")
+
+# os.system("pip install cuda-toolkit")
+# os.system("pip install -r requirements.txt")
+# os.system("pip install flash-attn transformers accelerate")
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,7 +24,7 @@ from pyquaternion import Quaternion
 from scipy.integrate import cumulative_trapezoid
 
 import json
-from openemma.YOLO3D.inference import yolo3d_nuScenes
+# from openemma.YOLO3D.inference import yolo3d_nuScenes
 from utils import EstimateCurvatureFromTrajectory, IntegrateCurvatureForPoints, OverlayTrajectory, WriteImageSequenceToVideo
 from transformers import MllamaForConditionalGeneration, AutoProcessor, Qwen2VLForConditionalGeneration, AutoTokenizer, Qwen2_5_VLForConditionalGeneration
 from PIL import Image
@@ -54,113 +62,109 @@ def getMessage(prompt, image=None, args=None):
 
 
 def vlm_inference(text=None, images=None, sys_message=None, processor=None, model=None, tokenizer=None, args=None):
+    out = None
+    if "llama" in args.model_path or "Llama" in args.model_path:
+        image = Image.open(images).convert('RGB')
+        message = getMessage(text, args=args)
+        input_text = processor.apply_chat_template(message, add_generation_prompt=True)
+        inputs = processor(
+            image,
+            input_text,
+            add_special_tokens=False,
+            return_tensors="pt"
+        ).to(model.device)
+        output = model.generate(**inputs, max_new_tokens=2048)
+        output_text = processor.decode(output[0])
         if "llama" in args.model_path or "Llama" in args.model_path:
-            image = Image.open(images).convert('RGB')
-            message = getMessage(text, args=args)
-            input_text = processor.apply_chat_template(message, add_generation_prompt=True)
-            inputs = processor(
-                image,
-                input_text,
-                add_special_tokens=False,
-                return_tensors="pt"
-            ).to(model.device)
+            output_text = re.findall(r'<\|start_header_id\|>assistant<\|end_header_id\|>(.*?)<\|eot_id\|>', output_text, re.DOTALL)[0].strip()
+        out = output_text
 
-            output = model.generate(**inputs, max_new_tokens=2048)
-
-            output_text = processor.decode(output[0])
-
-            if "llama" in args.model_path or "Llama" in args.model_path:
-                output_text = re.findall(r'<\|start_header_id\|>assistant<\|end_header_id\|>(.*?)<\|eot_id\|>', output_text, re.DOTALL)[0].strip()
-            return output_text
+    elif "qwen" in args.model_path or "Qwen" in args.model_path:
+        message = getMessage(text, image=images, args=args)
+        text_prompt = processor.apply_chat_template(
+            message, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs = process_vision_info(message)
+        inputs = processor(
+            text=[text_prompt],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(model.device)
         
-        elif "qwen" in args.model_path or "Qwen" in args.model_path:
-            message = getMessage(text, image=images, args=args)
-            text = processor.apply_chat_template(
-                message, tokenize=False, add_generation_prompt=True
-            )
-            image_inputs, video_inputs = process_vision_info(message)
-            inputs = processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            ).to(model.device)
-            generated_ids = model.generate(**inputs, max_new_tokens=128)
-            generated_ids_trimmed = [
-                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            output_text = processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
-            return output_text[0]
-
-        elif "llava" in args.model_path:
-            conv_mode = "mistral_instruct"
-            image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-            if IMAGE_PLACEHOLDER in text:
-                if model.config.mm_use_im_start_end:
-                    text = re.sub(IMAGE_PLACEHOLDER, image_token_se, text)
-                else:
-                    text = re.sub(IMAGE_PLACEHOLDER, DEFAULT_IMAGE_TOKEN, text)
+        generated_ids = model.generate(**inputs, max_new_tokens=256)
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        
+        print(f"number of generated tokens: {len(generated_ids_trimmed[0])}")
+        out = output_text[0]
+        
+    elif "llava" in args.model_path:
+        conv_mode = "mistral_instruct"
+        image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
+        if IMAGE_PLACEHOLDER in text:
+            if model.config.mm_use_im_start_end:
+                text = re.sub(IMAGE_PLACEHOLDER, image_token_se, text)
             else:
-                if model.config.mm_use_im_start_end:
-                    text = image_token_se + "\n" + text
-                else:
-                    text = DEFAULT_IMAGE_TOKEN + "\n" + text
-
-            conv = conv_templates[conv_mode].copy()
-            conv.append_message(conv.roles[0], text)
-            conv.append_message(conv.roles[1], None)
-            prompt = conv.get_prompt()
-
-            input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
-            image = Image.open(images).convert('RGB')
-
-            image_tensor = process_images([image], processor, model.config)[0]
-
-            with torch.inference_mode():
-                output_ids = model.generate(
-                    input_ids,
-                    images=image_tensor.unsqueeze(0).half().cuda(),
-                    image_sizes=[image.size],
-                    do_sample=True,
-                    temperature=0.2,
-                    top_p=None,
-                    num_beams=1,
-                    max_new_tokens=2048,
-                    use_cache=True,
-                    pad_token_id = tokenizer.eos_token_id,
-                )
-
-            outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-            return outputs
-                    
-        # elif "gpt" in args.model_path:
-        #     PROMPT_MESSAGES = [
-        #         {
-        #             "role": "user",
-        #             "content": [
-        #                 *map(lambda x: {"image": x, "resize": 768}, images),
-        #                 text,
-        #             ],
-        #         },
-        #     ]
-        #     if sys_message is not None:
-        #         sys_message_dict = {
-        #             "role": "system",
-        #             "content": sys_message
-        #         }
-        #         PROMPT_MESSAGES.append(sys_message_dict)
-        #     params = {
-        #         "model": "gpt-4o-2024-11-20",
-        #         "messages": PROMPT_MESSAGES,
-        #         "max_tokens": 400,
-        #     }
-
-        #     result = client.chat.completions.create(**params)
-
-        #     return result.choices[0].message.content
+                text = re.sub(IMAGE_PLACEHOLDER, DEFAULT_IMAGE_TOKEN, text)
+        else:
+            if model.config.mm_use_im_start_end:
+                text = image_token_se + "\n" + text
+            else:
+                text = DEFAULT_IMAGE_TOKEN + "\n" + text
+        conv = conv_templates[conv_mode].copy()
+        conv.append_message(conv.roles[0], text)
+        conv.append_message(conv.roles[1], None)
+        prompt = conv.get_prompt()
+        input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
+        image = Image.open(images).convert('RGB')
+        image_tensor = process_images([image], processor, model.config)[0]
+        with torch.inference_mode():
+            output_ids = model.generate(
+                input_ids,
+                images=image_tensor.unsqueeze(0).half().cuda(),
+                image_sizes=[image.size],
+                do_sample=True,
+                temperature=0.2,
+                top_p=None,
+                num_beams=1,
+                max_new_tokens=2048,
+                use_cache=True,
+                pad_token_id = tokenizer.eos_token_id,
+            )
+        outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+        out = outputs
+                
+    # elif "gpt" in args.model_path:
+    #     PROMPT_MESSAGES = [
+    #         {
+    #             "role": "user",
+    #             "content": [
+    #                 *map(lambda x: {"image": x, "resize": 768}, images),
+    #                 text,
+    #             ],
+    #         },
+    #     ]
+    #     if sys_message is not None:
+    #         sys_message_dict = {
+    #             "role": "system",
+    #             "content": sys_message
+    #         }
+    #         PROMPT_MESSAGES.append(sys_message_dict)
+    #     params = {
+    #         "model": "gpt-4o-2024-11-20",
+    #         "messages": PROMPT_MESSAGES,
+    #         "max_tokens": 400,
+    #     }
+    #     result = client.chat.completions.create(**params)
+    #     return result.choices[0].message.content
+    
+    return out
 
 def SceneDescription(obs_images, processor=None, model=None, tokenizer=None, args=None):
     prompt = f"""You are a autonomous driving labeller. You have access to these front-view camera images of a car taken at a 0.5 second interval over the past 5 seconds. Imagine you are driving the car. Describe the driving scene according to traffic lights, movements of other cars or pedestrians and lane markings."""
@@ -249,13 +253,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="qwen")
     parser.add_argument("--plot", type=bool, default=True)
-    parser.add_argument("--dataroot", type=str, default='nuscenes//v1.0-mini')
+    parser.add_argument("--dataroot", type=str, default='/datasets/nuscenes/v1.0')
     parser.add_argument("--version", type=str, default='v1.0-mini')
     parser.add_argument("--method", type=str, default='openemma')
-    args = parser.parse_args()
-
-    print(f"{args.model_path}")
-
+    args = parser.parse_args()    
+    
+    
     model = None
     processor = None
     tokenizer = None
@@ -265,18 +268,22 @@ if __name__ == '__main__':
         if "qwen" in args.model_path or "Qwen" in args.model_path:
             try:
                 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                    "/root/OpenEMMA/models/Qwen2.5-VL-3B-Instruct",
+                    "Qwen/Qwen2.5-VL-3B-Instruct",
                     torch_dtype=torch.bfloat16,
                     attn_implementation="flash_attention_2",
                     device_map="auto"
                 )
-                processor = AutoProcessor.from_pretrained("models/Qwen2.5-VL-3B-Instruct")
+                
+                print("model loaded to device:", model.device)
+                print("device info: ", torch.cuda.get_device_name(model.device))
+                
+                processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-32B-Instruct")
                 tokenizer = None
                 qwen25_loaded = True
                 print("已本地加载 Qwen2.5-VL-3B-Instruct 并启用 flash attention。")
             except Exception as e:
                 print("Qwen2.5-VL-3B-Instruct 加载失败，尝试加载 Qwen2-VL-7B-Instruct。")
-                print(e)
+                print("THE THING: ", e)
                 model = Qwen2VLForConditionalGeneration.from_pretrained(
                     "Qwen/Qwen2-VL-7B-Instruct",
                     torch_dtype=torch.bfloat16,
@@ -301,13 +308,17 @@ if __name__ == '__main__':
                 tokenizer=None
     except Exception as e:
         print("模型加载出现异常：", e)
+        
+    print("model loaded to device:", model.device)
+    print("device info: ", torch.cuda.get_device_name(model.device))
+    print(f"Model loaded: {model.__class__.__name__}")
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     timestamp = args.model_path + f"_results/{args.method}/" + timestamp
     os.makedirs(timestamp, exist_ok=True)
 
     # Load the dataset
-    nusc = NuScenes(version=args.version, dataroot=f"{os.getcwd()}/{args.dataroot}")
+    nusc = NuScenes(version=args.version, dataroot=f"{args.dataroot}")
 
     # Iterate the scenes
     scenes = nusc.scene
@@ -425,7 +436,7 @@ if __name__ == '__main__':
                 with open(os.path.join(curr_image), "rb") as image_file:
                     img = cv2.imdecode(np.frombuffer(image_file.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
                     
-            img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
+            # img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
 
             for rho in range(3):
                 # Assemble the prompt.
@@ -439,12 +450,15 @@ if __name__ == '__main__':
 
                 # Process the output.
                 prev_intent = updated_intent  # Stateful intent
+
                 pred_waypoints = prediction.replace("Future speeds and curvatures:", "").strip()
                 coordinates = re.findall(r"\[([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+)\]", pred_waypoints)
                 if not coordinates == []:
                     break
             if coordinates == []:
+                print("**WARNING**: No valid coordinates found, skipping this frame.")
                 continue
+            
             speed_curvature_pred = [[float(v), float(k)] for v, k in coordinates]
             speed_curvature_pred = speed_curvature_pred[:10]
             print(f"Got {len(speed_curvature_pred)} future actions: {speed_curvature_pred}")
@@ -465,7 +479,6 @@ if __name__ == '__main__':
 
             # Overlay the trajectory.
             check_flag = OverlayTrajectory(img, pred_traj.tolist(), obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0), args=args)
-            
 
             # Compute ADE.
             fut_ego_traj_world = np.array(fut_ego_traj_world)
@@ -539,61 +552,4 @@ if __name__ == '__main__':
     print(f"Total inference time: {time.time() - start_time} seconds")
 
 
-def vlm_inference(text=None, images=None, sys_message=None, processor=None, model=None, tokenizer=None, args=None):
-    if ("qwen" in args.model_path or "Qwen" in args.model_path):
-        # 判断是否为Qwen2.5-VL-3B-Instruct（新版）
-        if hasattr(model, "model_type") and getattr(model, "model_type", "") == "qwen2_5_vl":
-            # Qwen2.5-VL-3B-Instruct官方推荐推理方式
-            message = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": images},
-                        {"type": "text", "text": text}
-                    ]
-                }
-            ]
-            text_prompt = processor.apply_chat_template(
-                message, tokenize=False, add_generation_prompt=True
-            )
-            image_inputs, video_inputs = process_vision_info(message)
-            inputs = processor(
-                text=[text_prompt],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            )
-            inputs = inputs.to(model.device)
-            generated_ids = model.generate(**inputs, max_new_tokens=128)
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            output_text = processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
-            return output_text[0]
-        else:
-            # 兼容Qwen2-VL-7B-Instruct等老模型
-            message = getMessage(text, image=images, args=args)
-            text_prompt = processor.apply_chat_template(
-                message, tokenize=False, add_generation_prompt=True
-            )
-            image_inputs, video_inputs = process_vision_info(message)
-            inputs = processor(
-                text=[text_prompt],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            ).to(model.device)
-            generated_ids = model.generate(**inputs, max_new_tokens=128)
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            output_text = processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
-            return output_text[0]
-    # ... 其它模型推理逻辑保持不变 ...
 
