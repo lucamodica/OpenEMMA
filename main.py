@@ -10,9 +10,9 @@ import time
 # if os.system("pip show nuscenes-devkit qwen_vl_utils flash-attn") != 0:
 #     os.system("pip install nuscenes-devkit qwen_vl_utils flash-attn")
 
-# os.system("pip install cuda-toolkit")
-# os.system("pip install -r requirements.txt")
-# os.system("pip install flash-attn transformers accelerate")
+os.system("pip install cuda-toolkit")
+os.system("pip install -r requirements.txt")
+os.system("pip install flash-attn transformers accelerate")
 
 import cv2
 import numpy as np
@@ -73,7 +73,10 @@ def vlm_inference(text=None, images=None, sys_message=None, processor=None, mode
             add_special_tokens=False,
             return_tensors="pt"
         ).to(model.device)
-        output = model.generate(**inputs, max_new_tokens=2048)
+        
+        with torch.no_grad():
+            output = model.generate(**inputs, max_new_tokens=2048)
+
         output_text = processor.decode(output[0])
         if "llama" in args.model_path or "Llama" in args.model_path:
             output_text = re.findall(r'<\|start_header_id\|>assistant<\|end_header_id\|>(.*?)<\|eot_id\|>', output_text, re.DOTALL)[0].strip()
@@ -92,8 +95,10 @@ def vlm_inference(text=None, images=None, sys_message=None, processor=None, mode
             padding=True,
             return_tensors="pt",
         ).to(model.device)
-        
-        generated_ids = model.generate(**inputs, max_new_tokens=256)
+
+        with torch.no_grad():
+            generated_ids = model.generate(**inputs, max_new_tokens=128)
+            
         generated_ids_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
@@ -101,7 +106,7 @@ def vlm_inference(text=None, images=None, sys_message=None, processor=None, mode
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
         
-        print(f"number of generated tokens: {len(generated_ids_trimmed[0])}")
+        # print(f"number of generated tokens: {len(generated_ids_trimmed[0])}")
         out = output_text[0]
         
     elif "llava" in args.model_path:
@@ -124,6 +129,7 @@ def vlm_inference(text=None, images=None, sys_message=None, processor=None, mode
         input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
         image = Image.open(images).convert('RGB')
         image_tensor = process_images([image], processor, model.config)[0]
+        
         with torch.inference_mode():
             output_ids = model.generate(
                 input_ids,
@@ -312,9 +318,10 @@ if __name__ == '__main__':
     print("model loaded to device:", model.device)
     print("device info: ", torch.cuda.get_device_name(model.device))
     print(f"Model loaded: {model.__class__.__name__}")
+    model.eval()
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    timestamp = args.model_path + f"_results/{args.method}/" + timestamp
+    timestamp = args.model_path + f"_results/{args.method}/" + f"{timestamp}-nuscenes_{args.version}"
     os.makedirs(timestamp, exist_ok=True)
 
     # Load the dataset
@@ -323,10 +330,17 @@ if __name__ == '__main__':
     # Iterate the scenes
     scenes = nusc.scene
     
-    print(f"Number of scenes: {len(scenes)}")
+    
+    global_ade1s = []
+    global_ade2s = []
+    global_ade3s = []
+    global_aveg_ades = []
+    global_inference_times = []
 
-    start_time = time.time()
+    print(f"Number of scenes: {len(scenes)}")
     for scene in scenes:
+        start_time = time.time()
+        
         token = scene['token']
         first_sample_token = scene['first_sample_token']
         last_sample_token = scene['last_sample_token']
@@ -334,8 +348,9 @@ if __name__ == '__main__':
         description = scene['description']
         start_scene_time = time.time()
 
-        if not name in ["scene-0103", "scene-1077"]:
-            continue
+        # this is only for debug with the mini version of nuscenes
+        # if not name in ["scene-0103", "scene-1077"]:
+        #     continue
 
         # Get all image and pose in this scene
         front_camera_images = []
@@ -429,12 +444,8 @@ if __name__ == '__main__':
             # obs_images = [curr_image]
 
             # Allocate the images.
-            if "gpt" in args.model_path:
-                img = cv2.imdecode(np.frombuffer(base64.b64decode(curr_image), dtype=np.uint8), cv2.IMREAD_COLOR)
-                # img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
-            else:
-                with open(os.path.join(curr_image), "rb") as image_file:
-                    img = cv2.imdecode(np.frombuffer(image_file.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
+            with open(os.path.join(curr_image), "rb") as image_file:
+                img = cv2.imdecode(np.frombuffer(image_file.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
                     
             # img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
 
@@ -502,17 +513,17 @@ if __name__ == '__main__':
                 cv2.imwrite(f"{timestamp}/{name}_{i}_front_cam.jpg", img)
 
                 # Plot the trajectory.
-                plt.plot(fut_ego_traj_world[:, 0], fut_ego_traj_world[:, 1], 'r-', label='GT')
-                plt.plot(pred_traj[:, 0], pred_traj[:, 1], 'b-', label='Pred')
-                plt.legend()
-                plt.title(f"Scene: {name}, Frame: {i}, ADE: {ade}")
-                plt.savefig(f"{timestamp}/{name}_{i}_traj.jpg")
-                plt.close()
+                # plt.plot(fut_ego_traj_world[:, 0], fut_ego_traj_world[:, 1], 'r-', label='GT')
+                # plt.plot(pred_traj[:, 0], pred_traj[:, 1], 'b-', label='Pred')
+                # plt.legend()
+                # plt.title(f"Scene: {name}, Frame: {i}, ADE: {ade}")
+                # plt.savefig(f"{timestamp}/{name}_{i}_traj.jpg")
+                # plt.close()
 
                 # Save the trajectory
-                np.save(f"{timestamp}/{name}_{i}_pred_traj.npy", pred_traj)
-                np.save(f"{timestamp}/{name}_{i}_pred_curvatures.npy", pred_curvatures)
-                np.save(f"{timestamp}/{name}_{i}_pred_speeds.npy", pred_speeds)
+                # np.save(f"{timestamp}/{name}_{i}_pred_traj.npy", pred_traj)
+                # np.save(f"{timestamp}/{name}_{i}_pred_curvatures.npy", pred_curvatures)
+                # np.save(f"{timestamp}/{name}_{i}_pred_speeds.npy", pred_speeds)
 
                 # Save the descriptions
                 with open(f"{timestamp}/{name}_{i}_logs.txt", 'w') as f:
@@ -527,6 +538,13 @@ if __name__ == '__main__':
         mean_ade2s = np.mean(ade2s_list)
         mean_ade3s = np.mean(ade3s_list)
         aveg_ade = np.mean([mean_ade1s, mean_ade2s, mean_ade3s])
+        inference_time = time.time() - start_scene_time
+
+        global_ade1s.append(mean_ade1s)
+        global_ade2s.append(mean_ade2s)
+        global_ade3s.append(mean_ade3s)
+        global_aveg_ades.append(aveg_ade)
+        global_inference_times.append(inference_time)
 
         result = {
             "name": name,
@@ -534,7 +552,8 @@ if __name__ == '__main__':
             "ade1s": mean_ade1s,
             "ade2s": mean_ade2s,
             "ade3s": mean_ade3s,
-            "avgade": aveg_ade
+            "avgade": aveg_ade,
+            "inference_time": inference_time
         }
 
         with open(f"{timestamp}/ade_results.jsonl", "a") as f:
@@ -548,8 +567,21 @@ if __name__ == '__main__':
 
         # break  # Scenes
         
-    # print the total inference time
-    print(f"Total inference time: {time.time() - start_time} seconds")
+    global_result = {
+        "name": "OVERALL",
+        "overall_ade1s": np.mean(global_ade1s),
+        "overall_ade2s": np.mean(global_ade2s),
+        "overall_ade3s": np.mean(global_ade3s),
+        "overall_avgade": np.mean(global_aveg_ades),
+        "overall_inference_time_per_scene": np.mean(global_inference_times)
+    }
+    with open(f"{timestamp}/ade_results.jsonl", "a") as f:
+            f.write(json.dumps(global_result))
+            f.write("\n")
+
+
+    print(f"Overall ADE1s: {np.mean(global_ade1s)}, ADE2s: {np.mean(global_ade2s)}, ADE3s: {np.mean(global_ade3s)}, AvgADE: {np.mean(global_aveg_ades)}")
+    print(f"Overall Inference Time per Scene: {np.mean(global_inference_times)} seconds")
 
 
 
