@@ -21,8 +21,6 @@ from llava.mm_utils import tokenizer_image_token, process_images
 from llava.conversation import conv_templates
 
 
-random.seed(42)
-
 KEY = "<your-api-key>"
 
 def encode_image(image_path):
@@ -481,7 +479,7 @@ def DescribeOrUpdateIntent(obs_images, prev_intent=None, processor=None, model=N
     result = vlm_inference(text=prompt, images=obs_images, processor=processor, model=model, tokenizer=tokenizer, args=args)
 
     return result
-
+    
 def GenerateMotion(obs_images, obs_waypoints, obs_velocities, obs_curvatures, given_intent, processor=None, model=None, tokenizer=None, args=None):
     # assert len(obs_images) == len(obs_waypoints)
 
@@ -528,3 +526,13 @@ def GenerateMotion(obs_images, obs_waypoints, obs_velocities, obs_curvatures, gi
         if not "unable" in result and not "sorry" in result and "[" in result:
             break
     return result, scene_description, object_description, intent_description
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # for multi-GPU setups
+    

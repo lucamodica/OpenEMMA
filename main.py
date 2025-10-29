@@ -26,7 +26,7 @@ from scipy.integrate import cumulative_trapezoid
 
 import json
 # from openemma.YOLO3D.inference import yolo3d_nuScenes
-from utils import EstimateCurvatureFromTrajectory, IntegrateCurvatureForPoints, OverlayTrajectory, WriteImageSequenceToVideo, GenerateMotion
+from utils import EstimateCurvatureFromTrajectory, IntegrateCurvatureForPoints, OverlayTrajectory, WriteImageSequenceToVideo, GenerateMotion, set_seed
 from transformers import MllamaForConditionalGeneration, AutoProcessor, Qwen2VLForConditionalGeneration, AutoTokenizer, Qwen2_5_VLForConditionalGeneration
 from PIL import Image
 from qwen_vl_utils import process_vision_info
@@ -72,6 +72,9 @@ if __name__ == '__main__':
     args = parser.parse_args()    
     
     print(f"Arguments: {args.plot}")
+    
+    # set the seed
+    set_seed(42)
     
     model = None
     processor = None
@@ -283,7 +286,8 @@ if __name__ == '__main__':
             print(f"Got {len(speed_curvature_pred)} future actions: {speed_curvature_pred}")
 
             # GT
-            OverlayTrajectory(img, fut_ego_traj_world, obs_camera_params[-1], obs_ego_poses[-1], color=(255, 255, 0), args=args)
+            if args.plot:
+                OverlayTrajectory(img, fut_ego_traj_world, obs_camera_params[-1], obs_ego_poses[-1], color=(255, 255, 0), args=args)
 
             # Pred
             pred_len = min(FUT_LEN, len(speed_curvature_pred))
@@ -297,7 +301,8 @@ if __name__ == '__main__':
                                                                          obs_ego_velocities[-1][0]), pred_len)
 
             # Overlay the trajectory.
-            check_flag = OverlayTrajectory(img, pred_traj.tolist(), obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0), args=args)
+            if args.plot:
+                check_flag = OverlayTrajectory(img, pred_traj.tolist(), obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0), args=args)
 
             # Compute ADE.
             fut_ego_traj_world = np.array(fut_ego_traj_world)

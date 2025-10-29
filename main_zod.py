@@ -54,65 +54,63 @@ if __name__ == '__main__':
     model = None
     processor = None
     tokenizer = None
-    qwen25_loaded = False
-    try:
-        if "qwen" in args.model_path or "Qwen" in args.model_path:
-            try:
-                model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                    "Qwen/Qwen2.5-VL-3B-Instruct",
-                    torch_dtype=torch.bfloat16,
-                    attn_implementation="flash_attention_2",
-                    device_map="auto"
-                )
-                
-                print("model loaded to device:", model.device)
-                print("device info: ", torch.cuda.get_device_name(model.device))
-                
-                processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-32B-Instruct")
-                tokenizer = None
-                qwen25_loaded = True
-            except Exception as e:
-                print("Error while loading Qwen2.5-VL-3B-Instruct: ", e)
-                print("Loading Qwen2-VL-7B-Instruct instead...")
-                model = Qwen2VLForConditionalGeneration.from_pretrained(
-                    "Qwen/Qwen2-VL-7B-Instruct",
-                    torch_dtype=torch.bfloat16,
-                    device_map="auto"
-                )
-                processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
-                tokenizer = None
-                qwen25_loaded = False
-        else:
-            if "llava" == args.model_path:    
-                disable_torch_init()
-                tokenizer, model, processor, context_len = load_pretrained_model("liuhaotian/llava-v1.6-mistral-7b", None, "llava-v1.6-mistral-7b")
-                image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-            elif "llava" in args.model_path:
-                disable_torch_init()
-                tokenizer, model, processor, context_len = load_pretrained_model(args.model_path, None, "llava-v1.6-mistral-7b")
-                image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
+    def load_model():
+        try:
+            if "qwen" in args.model_path or "Qwen" in args.model_path:
+                try:
+                    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                        "Qwen/Qwen2.5-VL-3B-Instruct",
+                        torch_dtype=torch.bfloat16,
+                        attn_implementation="flash_attention_2",
+                        device_map="auto"
+                    )
+                    print("model loaded to device:", model.device)
+                    print("device info: ", torch.cuda.get_device_name(model.device))
+                    
+                    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-32B-Instruct")
+                    tokenizer = None
+                except Exception as e:
+                    print("Error while loading Qwen2.5-VL-3B-Instruct: ", e)
+                    print("Loading Qwen2-VL-7B-Instruct instead...")
+                    model = Qwen2VLForConditionalGeneration.from_pretrained(
+                        "Qwen/Qwen2-VL-7B-Instruct",
+                        torch_dtype=torch.bfloat16,
+                        device_map="auto"
+                    )
+                    processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
+                    tokenizer = None
             else:
-                model = None
-                processor = None
-                tokenizer=None
-    except Exception as e:
-        print("Error while loading model: ", e)
-        
+                if "llava" == args.model_path:    
+                    disable_torch_init()
+                    tokenizer, model, processor, context_len = load_pretrained_model("liuhaotian/llava-v1.6-mistral-7b", None, "llava-v1.6-mistral-7b")
+                elif "llava" in args.model_path:
+                    disable_torch_init()
+                    tokenizer, model, processor, context_len = load_pretrained_model(args.model_path, None, "llava-v1.6-mistral-7b")
+                else:
+                    model = None
+                    processor = None
+                    tokenizer=None
+        except Exception as e:
+            print("Error while loading model: ", e)
+            
+        return model, processor, tokenizer
+
+    model, processor, tokenizer = load_model()
     print("model loaded to device:", model.device)
     print("device info: ", torch.cuda.get_device_name(model.device))
     print(f"Model loaded: {model.__class__.__name__}")
     model.eval()
-
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    timestamp = args.model_path + f"_results/{args.method}/" + f"{timestamp}-zod_{args.version}"
-    os.makedirs(timestamp, exist_ok=True)
 
     # Load the dataset
     zod = ZodSequences(dataset_root=args.dataroot, version=args.version)
     val_ids = zod.get_split(constants.VAL)
     
     draw_frames_every_nth = 5  # to match nuscenes recordig rate of frames in the scenes (2Hz instead of 10Hz)
-    N_SEQUENCES = 150
+    N_SEQUENCES = min(len(val_ids), 150)
+    
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = args.model_path + f"_results/{args.method}/" + f"{timestamp}-zod_{args.version}"
+    os.makedirs(timestamp, exist_ok=True)
 
     global_ade1s = []
     global_ade2s = []
@@ -124,22 +122,21 @@ if __name__ == '__main__':
     for i in range(N_SEQUENCES):
         start_scene_time = time.time()
         
-        seq = zod[val_ids[i]]
+        seq = zod[list(val_ids)[i]]
         seq_info = seq.info
-        
-        name = seq.id
+        name = seq_info.id
         
         # Get all image and pose in this scene
         front_camera_images = []
         ego_poses = []
         camera_params = seq.calibration
         for j, frame in enumerate(seq_info.get_camera_frames()):
-            if j % draw_frames_every_nth != 0:
+            if j % draw_frames_every_nth == 0:
                 # Get the front camera image of the sample.
                 front_camera_images.append(frame.read())
 
                 # Get the ego pose of the sample.
-                pose = seq.ego_motion.get_poses(frame.info.keyframe_time.timestamp())
+                pose = seq.ego_motion.get_poses(frame.time.timestamp())
                 ego_poses.append(pose)
                     
         scene_length = len(front_camera_images)
@@ -151,9 +148,9 @@ if __name__ == '__main__':
 
         ## Compute interpolated trajectory.
         # Get the velocities of the ego vehicle.
-        ego_poses_world = [ego_poses[t]['translation'][:3] for t in range(scene_length)]
+        # (poses[t, :3, -1] is the translation of the ego vehicle at scene t in world coordinates)'
+        ego_poses_world = [ego_poses[t][:3, -1] for t in range(scene_length)]
         ego_poses_world = np.array(ego_poses_world)
-        plt.plot(ego_poses_world[:, 0], ego_poses_world[:, 1], 'r-', label='GT')
 
         ego_velocities = np.zeros_like(ego_poses_world)
         ego_velocities[1:] = ego_poses_world[1:] - ego_poses_world[:-1]
@@ -170,6 +167,7 @@ if __name__ == '__main__':
             plt.figure(figsize=(10, 10))
             plt.quiver(ego_poses_world[:, 0], ego_poses_world[:, 1], ego_velocities[:, 0], ego_velocities[:, 1],
                     color='b')
+            plt.plot(ego_poses_world[:, 0], ego_poses_world[:, 1], 'r-', label='GT')
             plt.plot(estimated_points[:, 0], estimated_points[:, 1], 'g-', label='Reconstruction')
             plt.legend()
             plt.title(f"Ego Vehicle Trajectory Interpolation for Scene {name}")
@@ -177,18 +175,18 @@ if __name__ == '__main__':
             plt.close()
 
         # Get the waypoints of the ego vehicle.
-        ego_traj_world = [ego_poses[t]['translation'][:3] for t in range(scene_length)]
+        ego_traj_world = [ego_poses[t][:3, -1] for t in range(scene_length)]
 
         prev_intent = None
         cam_images_sequence = []
         ade1s_list = []
         ade2s_list = []
         ade3s_list = []
-        for i in range(scene_length - TTL_LEN):
+        for i in range(scene_length - TTL_LEN - 1): # we exclude the last frame with 0 ego points
             # Get the raw image data.
             obs_images = front_camera_images[i:i+OBS_LEN]
             obs_ego_poses = ego_poses[i:i+OBS_LEN]
-            obs_camera_params = camera_params[i:i+OBS_LEN]
+            obs_camera_params = camera_params
             obs_ego_traj_world = ego_traj_world[i:i+OBS_LEN]
             fut_ego_traj_world = ego_traj_world[i+OBS_LEN:i+TTL_LEN]
             obs_ego_velocities = ego_velocities[i:i+OBS_LEN]
@@ -200,11 +198,6 @@ if __name__ == '__main__':
             curr_image = obs_images[-1]
 
             # obs_images = [curr_image]
-
-            # Allocate the images.
-            with open(os.path.join(curr_image), "rb") as image_file:
-                img = cv2.imdecode(np.frombuffer(image_file.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
-                    
             # img = yolo3d_nuScenes(img, calib=obs_camera_params[-1])[0]
 
             for rho in range(3):
@@ -233,7 +226,8 @@ if __name__ == '__main__':
             print(f"Got {len(speed_curvature_pred)} future actions: {speed_curvature_pred}")
 
             # GT
-            OverlayTrajectory(img, fut_ego_traj_world, obs_camera_params[-1], obs_ego_poses[-1], color=(255, 255, 0), args=args)
+            if args.plot == True:
+                OverlayTrajectory(curr_image, fut_ego_traj_world, obs_camera_params[-1], obs_ego_poses[-1], color=(255, 255, 0), args=args)
 
             # Pred
             pred_len = min(FUT_LEN, len(speed_curvature_pred))
@@ -247,7 +241,8 @@ if __name__ == '__main__':
                                                                          obs_ego_velocities[-1][0]), pred_len)
 
             # Overlay the trajectory.
-            check_flag = OverlayTrajectory(img, pred_traj.tolist(), obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0), args=args)
+            if args.plot == True:
+                OverlayTrajectory(curr_image, pred_traj.tolist(), obs_camera_params[-1], obs_ego_poses[-1], color=(255, 0, 0), args=args)
 
             # Compute ADE.
             fut_ego_traj_world = np.array(fut_ego_traj_world)
@@ -267,21 +262,21 @@ if __name__ == '__main__':
 
             # Write to image.
             if args.plot == True:
-                cam_images_sequence.append(img.copy())
-                cv2.imwrite(f"{timestamp}/{name}_{i}_front_cam.jpg", img)
+                cam_images_sequence.append(curr_image.copy())
+                cv2.imwrite(f"{timestamp}/{name}_{i}_front_cam.jpg", curr_image)
 
                 # Plot the trajectory.
                 # plt.plot(fut_ego_traj_world[:, 0], fut_ego_traj_world[:, 1], 'r-', label='GT')
-                # plt.plot(pred_traj[:, 0], pred_traj[:, 1], 'b-', label='Pred')
-                # plt.legend()
-                # plt.title(f"Scene: {name}, Frame: {i}, ADE: {ade}")
-                # plt.savefig(f"{timestamp}/{name}_{i}_traj.jpg")
-                # plt.close()
+                plt.plot(pred_traj[:, 0], pred_traj[:, 1], 'b-', label='Pred')
+                plt.legend()
+                plt.title(f"Scene: {name}, Frame: {i}, ADE: {ade}")
+                plt.savefig(f"{timestamp}/{name}_{i}_traj.jpg")
+                plt.close()
 
                 # Save the trajectory
-                # np.save(f"{timestamp}/{name}_{i}_pred_traj.npy", pred_traj)
-                # np.save(f"{timestamp}/{name}_{i}_pred_curvatures.npy", pred_curvatures)
-                # np.save(f"{timestamp}/{name}_{i}_pred_speeds.npy", pred_speeds)
+                np.save(f"{timestamp}/{name}_{i}_pred_traj.npy", pred_traj)
+                np.save(f"{timestamp}/{name}_{i}_pred_curvatures.npy", pred_curvatures)
+                np.save(f"{timestamp}/{name}_{i}_pred_speeds.npy", pred_speeds)
 
                 # Save the descriptions
                 with open(f"{timestamp}/{name}_{i}_logs.txt", 'w') as f:
