@@ -51,7 +51,6 @@ if __name__ == '__main__':
     tokenizer = None
     qwen25_loaded = False
     try:
-        # 优先本地加载Qwen2.5-VL-3B-Instruct，并优选flash attention
         if "qwen" in args.model_path or "Qwen" in args.model_path:
             try:
                 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(

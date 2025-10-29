@@ -10,9 +10,10 @@ import time
 # if os.system("pip show nuscenes-devkit qwen_vl_utils flash-attn") != 0:
 #     os.system("pip install nuscenes-devkit qwen_vl_utils flash-attn")
 
-os.system("pip install cuda-toolkit")
-os.system("pip install -r requirements.txt")
-os.system("pip install flash-attn transformers accelerate")
+print(f"cwd: {os.getcwd()}")
+os.system("pip install --quiet cuda-toolkit")
+os.system("pip install -r --quiet requirements.txt")
+os.system("pip install --quiet flash-attn transformers accelerate")
 
 import cv2
 import numpy as np
@@ -64,12 +65,13 @@ def getMessage(prompt, image=None, args=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="qwen")
-    parser.add_argument("--plot", type=bool, default=True)
+    parser.add_argument("--plot", type=bool, default=False)
     parser.add_argument("--dataroot", type=str, default='/datasets/nuscenes/v1.0')
     parser.add_argument("--version", type=str, default='v1.0-mini')
     parser.add_argument("--method", type=str, default='openemma')
     args = parser.parse_args()    
     
+    print(f"Arguments: {args.plot}")
     
     model = None
     processor = None
@@ -319,24 +321,24 @@ if __name__ == '__main__':
                 cv2.imwrite(f"{timestamp}/{name}_{i}_front_cam.jpg", img)
 
                 # Plot the trajectory.
-                # plt.plot(fut_ego_traj_world[:, 0], fut_ego_traj_world[:, 1], 'r-', label='GT')
-                # plt.plot(pred_traj[:, 0], pred_traj[:, 1], 'b-', label='Pred')
-                # plt.legend()
-                # plt.title(f"Scene: {name}, Frame: {i}, ADE: {ade}")
-                # plt.savefig(f"{timestamp}/{name}_{i}_traj.jpg")
-                # plt.close()
-
-                # Save the trajectory
-                # np.save(f"{timestamp}/{name}_{i}_pred_traj.npy", pred_traj)
-                # np.save(f"{timestamp}/{name}_{i}_pred_curvatures.npy", pred_curvatures)
-                # np.save(f"{timestamp}/{name}_{i}_pred_speeds.npy", pred_speeds)
-
-                # Save the descriptions
-                with open(f"{timestamp}/{name}_{i}_logs.txt", 'w') as f:
-                    f.write(f"Scene Description: {scene_description}\n")
-                    f.write(f"Object Description: {object_description}\n")
-                    f.write(f"Intent Description: {updated_intent}\n")
-                    f.write(f"Average Displacement Error: {ade}\n")
+                plt.plot(fut_ego_traj_world[:, 0], fut_ego_traj_world[:, 1], 'r-', label='GT')
+                plt.plot(pred_traj[:, 0], pred_traj[:, 1], 'b-', label='Pred')
+                plt.legend()
+                plt.title(f"Scene: {name}, Frame: {i}, ADE: {ade}")
+                plt.savefig(f"{timestamp}/{name}_{i}_traj.jpg")
+                plt.close()
+                
+            # Save the trajectory
+            np.save(f"{timestamp}/{name}_{i}_pred_traj.npy", pred_traj)
+            np.save(f"{timestamp}/{name}_{i}_pred_curvatures.npy", pred_curvatures)
+            np.save(f"{timestamp}/{name}_{i}_pred_speeds.npy", pred_speeds)
+            
+            # Save the descriptions
+            with open(f"{timestamp}/{name}_{i}_logs.txt", 'w') as f:
+                f.write(f"Scene Description: {scene_description}\n")
+                f.write(f"Object Description: {object_description}\n")
+                f.write(f"Intent Description: {updated_intent}\n")
+                f.write(f"Average Displacement Error: {ade}\n")
 
             # break  # Timestep
 
