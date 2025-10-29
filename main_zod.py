@@ -16,6 +16,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 
+from zod import ZodFrames
+from zod import ZodSequences
+import zod.constants as constants
+from zod.constants import Camera, Lidar, Anonymization, AnnotationProject
+
 
 from llava.model.builder import load_pretrained_model
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IMAGE_PLACEHOLDER
@@ -40,8 +45,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="qwen")
     parser.add_argument("--plot", type=bool, default=True)
-    parser.add_argument("--dataroot", type=str, default='/datasets/nuscenes/v1.0')
-    parser.add_argument("--version", type=str, default='v1.0-mini')
+    parser.add_argument("--dataroot", type=str, default='/datasets/zod/zodv2')
+    parser.add_argument("--version", type=str, default='mini') # "mini" or "full"
     parser.add_argument("--method", type=str, default='openemma')
     args = parser.parse_args()    
     
@@ -66,10 +71,9 @@ if __name__ == '__main__':
                 processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-32B-Instruct")
                 tokenizer = None
                 qwen25_loaded = True
-                print("已本地加载 Qwen2.5-VL-3B-Instruct 并启用 flash attention。")
             except Exception as e:
-                print("Qwen2.5-VL-3B-Instruct 加载失败，尝试加载 Qwen2-VL-7B-Instruct。")
-                print("THE THING: ", e)
+                print("Error while loading Qwen2.5-VL-3B-Instruct: ", e)
+                print("Loading Qwen2-VL-7B-Instruct instead...")
                 model = Qwen2VLForConditionalGeneration.from_pretrained(
                     "Qwen/Qwen2-VL-7B-Instruct",
                     torch_dtype=torch.bfloat16,
@@ -78,7 +82,6 @@ if __name__ == '__main__':
                 processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
                 tokenizer = None
                 qwen25_loaded = False
-                print("已加载 Qwen2-VL-7B-Instruct。")
         else:
             if "llava" == args.model_path:    
                 disable_torch_init()
@@ -93,7 +96,7 @@ if __name__ == '__main__':
                 processor = None
                 tokenizer=None
     except Exception as e:
-        print("模型加载出现异常：", e)
+        print("Error while loading model: ", e)
         
     print("model loaded to device:", model.device)
     print("device info: ", torch.cuda.get_device_name(model.device))
@@ -101,71 +104,47 @@ if __name__ == '__main__':
     model.eval()
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    timestamp = args.model_path + f"_results/{args.method}/" + f"{timestamp}-nuscenes_{args.version}"
+    timestamp = args.model_path + f"_results/{args.method}/" + f"{timestamp}-zod_{args.version}"
     os.makedirs(timestamp, exist_ok=True)
 
     # Load the dataset
-    nusc = NuScenes(version=args.version, dataroot=f"{args.dataroot}")
+    zod = ZodSequences(dataset_root=args.dataroot, version=args.version)
+    val_ids = zod.get_split(constants.VAL)
+    
+    draw_frames_every_nth = 5  # to match nuscenes recordig rate of frames in the scenes (2Hz instead of 10Hz)
+    N_SEQUENCES = 150
 
-    # Iterate the scenes
-    scenes = nusc.scene
-    
-    
     global_ade1s = []
     global_ade2s = []
     global_ade3s = []
     global_aveg_ades = []
     global_inference_times = []
 
-    print(f"Number of scenes: {len(scenes)}")
-    for scene in scenes:
-        start_time = time.time()
-        
-        token = scene['token']
-        first_sample_token = scene['first_sample_token']
-        last_sample_token = scene['last_sample_token']
-        name = scene['name']
-        description = scene['description']
+    print(f"Number of sequences: {N_SEQUENCES}")
+    for i in range(N_SEQUENCES):
         start_scene_time = time.time()
-
-        # this is only for debug with the mini version of nuscenes
-        # if not name in ["scene-0103", "scene-1077"]:
-        #     continue
-
+        
+        seq = zod[val_ids[i]]
+        seq_info = seq.info
+        
+        name = seq.id
+        
         # Get all image and pose in this scene
         front_camera_images = []
         ego_poses = []
-        camera_params = []
-        curr_sample_token = first_sample_token
-        while True:
-            sample = nusc.get('sample', curr_sample_token)
+        camera_params = seq.calibration
+        for j, frame in enumerate(seq_info.get_camera_frames()):
+            if j % draw_frames_every_nth != 0:
+                # Get the front camera image of the sample.
+                front_camera_images.append(frame.read())
 
-            # Get the front camera image of the sample.
-            cam_front_data = nusc.get('sample_data', sample['data']['CAM_FRONT'])
-            nusc.render_sample_data(cam_front_data['token'])
-
-
-            if "gpt" in args.model_path:
-                with open(os.path.join(nusc.dataroot, cam_front_data['filename']), "rb") as image_file:
-                    front_camera_images.append(base64.b64encode(image_file.read()).decode('utf-8'))
-            else:
-                front_camera_images.append(os.path.join(nusc.dataroot, cam_front_data['filename']))
-
-            # Get the ego pose of the sample.
-            pose = nusc.get('ego_pose', cam_front_data['ego_pose_token'])
-            ego_poses.append(pose)
-
-            # Get the camera parameters of the sample.
-            camera_params.append(nusc.get('calibrated_sensor', cam_front_data['calibrated_sensor_token']))
-
-            # Advance the pointer.
-            if curr_sample_token == last_sample_token:
-                break
-            curr_sample_token = sample['next']
-
+                # Get the ego pose of the sample.
+                pose = seq.ego_motion.get_poses(frame.info.keyframe_time.timestamp())
+                ego_poses.append(pose)
+                    
         scene_length = len(front_camera_images)
         print(f"Scene {name} has {scene_length} frames")
-
+        
         if scene_length < TTL_LEN:
             print(f"Scene {name} has less than {TTL_LEN} frames, skipping...")
             continue
@@ -207,7 +186,6 @@ if __name__ == '__main__':
         ade3s_list = []
         for i in range(scene_length - TTL_LEN):
             # Get the raw image data.
-            # utils.PlotBase64Image(front_camera_images[0])
             obs_images = front_camera_images[i:i+OBS_LEN]
             obs_ego_poses = ego_poses[i:i+OBS_LEN]
             obs_camera_params = camera_params[i:i+OBS_LEN]
@@ -328,7 +306,6 @@ if __name__ == '__main__':
 
         result = {
             "name": name,
-            "token": token,
             "ade1s": mean_ade1s,
             "ade2s": mean_ade2s,
             "ade3s": mean_ade3s,
@@ -345,7 +322,7 @@ if __name__ == '__main__':
             
         print(f"Scene {name} done in {time.time() - start_scene_time} seconds. ADE1s: {mean_ade1s}, ADE2s: {mean_ade2s}, ADE3s: {mean_ade3s}, AvgADE: {aveg_ade}")
 
-        # break  # Scenes
+        break  # Scenes
         
     global_result = {
         "name": "OVERALL",
