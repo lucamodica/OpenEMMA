@@ -10,9 +10,9 @@ import time
 # if os.system("pip show nuscenes-devkit qwen_vl_utils flash-attn") != 0:
 #     os.system("pip install nuscenes-devkit qwen_vl_utils flash-attn")
 
-print(f"cwd: {os.getcwd()}")
+# print(f"cwd: {os.getcwd()}")
 os.system("pip install --quiet cuda-toolkit")
-os.system("pip install -r --quiet requirements.txt")
+# os.system("pip install -r --quiet requirements.txt")
 os.system("pip install --quiet flash-attn transformers accelerate")
 
 import cv2
@@ -65,7 +65,7 @@ def getMessage(prompt, image=None, args=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="qwen")
-    parser.add_argument("--plot", type=bool, default=False)
+    parser.add_argument("--plot", type=bool, default=True)
     parser.add_argument("--dataroot", type=str, default='/datasets/nuscenes/v1.0')
     parser.add_argument("--version", type=str, default='v1.0-mini')
     parser.add_argument("--method", type=str, default='openemma')
@@ -188,7 +188,7 @@ if __name__ == '__main__':
 
             # Get the camera parameters of the sample.
             camera_params.append(nusc.get('calibrated_sensor', cam_front_data['calibrated_sensor_token']))
-
+    
             # Advance the pointer.
             if curr_sample_token == last_sample_token:
                 break

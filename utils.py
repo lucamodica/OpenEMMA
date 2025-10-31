@@ -173,17 +173,35 @@ def ProjectEgoToImage(points_3d: np.array, K):
     points_2d = points_2d[:, :2] / points_2d[:, 2][:, np.newaxis]  # Normalize by depth
     return points_2d
 
-def ProjectWorldToImage(points3d_world: list, cam_to_ego, ego_to_world):
+# TODO: to be fixed for the rotation and translation array shapes
+def ProjectWorldToImage(points3d_world: list, cam_to_ego, ego_to_world, cam_instrinsic=None):
     # Plot the waypoints.
-
-    T_ego_global = FormTransformationMatrix(ego_to_world['translation'], Quaternion(ego_to_world['rotation']))
-    T_cam_ego = FormTransformationMatrix(cam_to_ego['translation'], Quaternion(cam_to_ego['rotation']))
-    T_cam_global = T_ego_global @ T_cam_ego
-    T_global_cam = np.linalg.inv(T_cam_global)
+    
+    # nuScenes
+    if isinstance(ego_to_world, dict):
+        # if they don't have the attribute "translation" and rotation, just take them from
+        # a 4x4 matrix and then flat it such that it's a 1d array of length 4
+        translation_global = ego_to_world['translation'] if isinstance(ego_to_world, dict) else ego_to_world[:3, 3]
+        rotation_global = Quaternion(ego_to_world['rotation']) if isinstance(ego_to_world, dict) else Quaternion(ego_to_world[:3, :3])
+        translation_cam = cam_to_ego['translation'] if isinstance(cam_to_ego, dict) else cam_to_ego[:3, 3]
+        rotation_cam = Quaternion(cam_to_ego['rotation']) if isinstance(cam_to_ego, dict) else Quaternion(cam_to_ego[:3, :3])
+        
+        # Compute transformation matrices.
+        T_ego_global = FormTransformationMatrix(translation_global, rotation_global)
+        T_cam_ego = FormTransformationMatrix(translation_cam, rotation_cam)
+        T_cam_global = T_ego_global @ T_cam_ego
+        T_global_cam = np.linalg.inv(T_cam_global)
+    # ZOD
+    else:
+        T_ego_global = ego_to_world
+        T_cam_ego = cam_to_ego
+        T_cam_global = T_ego_global @ T_cam_ego
+        T_global_cam = np.linalg.inv(T_cam_global)
+        
 
     points3d_cam = [TransformPoint(point, T_global_cam) for point in points3d_world]
 
-    points3d_img = ProjectEgoToImage(np.array(points3d_cam), cam_to_ego['camera_intrinsic'])
+    points3d_img = ProjectEgoToImage(np.array(points3d_cam), cam_instrinsic[:3, :3] if cam_instrinsic is not None else cam_to_ego['camera_intrinsic'])
 
     return points3d_img
 
@@ -215,25 +233,21 @@ def OffsetTrajectory3D(points, offset_distance):
 
     return offset_points
 
-def OverlayTrajectory(img, points3d_world: list, cam_to_ego, ego_to_world, color=(0, 0, 255), args=None):
+def OverlayTrajectory(img, points3d_world: list, cam_to_ego, ego_to_world, color=(0, 0, 255), args=None, cam_instrinsic=None):
 
     # Construct left/right boundaries.
-    points3d_left_world = OffsetTrajectory3D(np.array(points3d_world), -1.73 / 2)
-    points3d_right_world = OffsetTrajectory3D(np.array(points3d_world), 1.73 / 2)
+    points3d_left_world = OffsetTrajectory3D(np.array(points3d_world), offset_distance=-1.73 / 2)
+    points3d_right_world = OffsetTrajectory3D(np.array(points3d_world), offset_distance=1.73 / 2)
 
     # Project the waypoints to the image.
-    points3d_img = ProjectWorldToImage(points3d_world, cam_to_ego, ego_to_world)
-    points3d_left_img = ProjectWorldToImage(points3d_left_world.tolist(), cam_to_ego, ego_to_world)
-    points3d_right_img = ProjectWorldToImage(points3d_right_world.tolist(), cam_to_ego, ego_to_world)
+    points3d_img = ProjectWorldToImage(points3d_world, cam_to_ego, ego_to_world, cam_instrinsic)
+    points3d_left_img = ProjectWorldToImage(points3d_left_world.tolist(), cam_to_ego, ego_to_world, cam_instrinsic)
+    points3d_right_img = ProjectWorldToImage(points3d_right_world.tolist(), cam_to_ego, ego_to_world, cam_instrinsic)
 
     if args.plot:
         # Overlay the waypoints on the image.
         for i in range(len(points3d_img) - 1):
             cv2.circle(img, tuple(points3d_img[i].astype(int)), radius=6, color=color, thickness=-1)
-
-        # # Draw lines.
-        # for i in range(len(points3d_img) - 1):
-        #     cv2.line(img, tuple(points3d_img[i].astype(int)), tuple(points3d_img[i+1].astype(int)), color, 2)
 
     # Draw sweep area polygon between the boundaries.
     frame = np.zeros_like(img)
@@ -243,7 +257,7 @@ def OverlayTrajectory(img, points3d_world: list, cam_to_ego, ego_to_world, color
         check_flag = True
         return check_flag
     if args.plot:
-        cv2.fillPoly(frame, [polygon], color=color)  # Green polygon
+        cv2.fillPoly(frame, [polygon], color=color)
         mask = frame.astype(bool)
         img[mask] = cv2.addWeighted(img, 0.5, frame, 0.5, 0)[mask]
     return check_flag
