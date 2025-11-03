@@ -41,7 +41,7 @@ def compute_mean_metric(results, metric_name):
 
 if __name__ == '__main__':
     # It's better to use a variable for the file path
-    file_path = "~/workspace/madame-web/qwen_results/openemma/20251029-171803-nuscenes_v1.0-test/ade_results.jsonl"
+    file_path = ...
     results = read_jsonl(file_path)
 
     # The original script assumes a dictionary of sequences,
